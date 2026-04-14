@@ -3,6 +3,9 @@ app-cliente_nd
 app-cliente_dist
 benchmark-get_nd
 benchmark-get_dist
+app-cliente
+clavesRPC_server
+app-concurrencia
 
 # Objetos de compilación
 *.o
@@ -15,3 +18,7 @@ src/*.o
 .DS_Store
 .vscode/
 *.swp
+
+# Artefactos de depuracion y logs
+*.dSYM/
+*.log
