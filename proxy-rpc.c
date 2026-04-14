@@ -9,11 +9,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <rpc/rpc.h>
+#include <netdb.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include "clavesRPC.h"
 #include "claves.h"
 
 /* Dirección IP del servidor RPC (por defecto localhost) */
 #define DEFAULT_HOST "localhost"
+#define RPC_PORT 16666
+#define MAX_TEXTO_C 256
+#define MAX_VALUE2_C 32
 
 /* Variable global para guardar el cliente RPC */
 static CLIENT *clnt = NULL;
@@ -21,17 +27,46 @@ static CLIENT *clnt = NULL;
 /* Función auxiliar para obtener el cliente RPC */
 static CLIENT *get_rpc_client(void) {
     if (clnt == NULL) {
+        int rpc_sock = RPC_ANYSOCK;
+        struct timeval timeout;
+
         /* Si no hay cliente, intentamos conectar al servidor */
         char *host_ip = getenv("IP_TUPLAS");
         if (host_ip == NULL) {
             host_ip = DEFAULT_HOST;
         }
         
-        clnt = clnt_create(host_ip, CLAVES_RPC_PROG, CLAVES_RPC_VERS, "tcp");
-        if (clnt == NULL) {
-            clnt_pcreateerror(host_ip);
+        /* Resolvemos el nombre del host */
+        struct hostent *hp = gethostbyname(host_ip);
+        if (hp == NULL) {
+            fprintf(stderr, "Cannot resolve host: %s\n", host_ip);
             return NULL;
         }
+        
+        /* Creamos la estructura de dirección del servidor */
+        struct sockaddr_in server_addr;
+        memset(&server_addr, 0, sizeof(server_addr));
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(RPC_PORT);
+        memcpy(&server_addr.sin_addr, hp->h_addr_list[0], hp->h_length);
+        
+        printf("DEBUG: Conectando a %s puerto %d\n", host_ip, RPC_PORT);
+        fflush(stdout);
+
+        /* Creamos el cliente UDP directamente sin usar portmapper */
+        timeout.tv_sec = 5;
+        timeout.tv_usec = 0;
+        clnt = clntudp_create(&server_addr, CLAVES_RPC_PROG, CLAVES_RPC_VERS, timeout, &rpc_sock);
+        
+        if (clnt == NULL) {
+            fprintf(stderr, "ERROR: Cannot create RPC client\n");
+            fprintf(stderr, "Make sure server is running at %s:%d\n", host_ip, RPC_PORT);
+            clnt_pcreateerror("clntudp_create");
+            return NULL;
+        }
+        
+        printf("DEBUG: Conexión RPC establecida\n");
+        fflush(stdout);
     }
     return clnt;
 }
@@ -60,6 +95,16 @@ int destroy(void) {
 int set_value(char *key, char *value1, int N_value2, float *V_value2, struct Paquete value3) {
     CLIENT *client = get_rpc_client();
     if (client == NULL) {
+        return -1;
+    }
+
+    if (key == NULL || value1 == NULL || V_value2 == NULL) {
+        return -1;
+    }
+    if (strlen(key) >= MAX_TEXTO_C || strlen(value1) >= MAX_TEXTO_C) {
+        return -1;
+    }
+    if (N_value2 < 1 || N_value2 > MAX_VALUE2_C) {
         return -1;
     }
     
@@ -132,6 +177,16 @@ int get_value(char *key, char *value1, int *N_value2, float *V_value2, struct Pa
 int modify_value(char *key, char *value1, int N_value2, float *V_value2, struct Paquete value3) {
     CLIENT *client = get_rpc_client();
     if (client == NULL) {
+        return -1;
+    }
+
+    if (key == NULL || value1 == NULL || V_value2 == NULL) {
+        return -1;
+    }
+    if (strlen(key) >= MAX_TEXTO_C || strlen(value1) >= MAX_TEXTO_C) {
+        return -1;
+    }
+    if (N_value2 < 1 || N_value2 > MAX_VALUE2_C) {
         return -1;
     }
     

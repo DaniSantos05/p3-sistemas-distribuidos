@@ -7,6 +7,11 @@
 // Incluimos string.h para poder usar memset y strlen.
 #include <string.h>
 
+// Incluimos socket.h para las funciones de socket
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+
 // Incluimos la cabecera original del servicio.
 #include "claves.h"
 
@@ -15,6 +20,11 @@
 
 // Declaraciones extern necesarias para RPC
 extern void claves_rpc_prog_1(struct svc_req *rqstp, SVCXPRT *transp);
+
+// ==========================================================
+// CONSTANTES
+// ==========================================================
+#define RPC_SERVER_PORT 16666
 
 // Definimos el tamaño máximo real de texto en C.
 // En RPC MAX_TEXTO vale 255, pero en C necesitamos 256 para incluir '\0'.
@@ -336,29 +346,68 @@ int _rpcsvcdirty;  /* Still serving ? */
 // ==========================================================
 
 int main(int argc, char *argv[]) {
+    int sock;
     SVCXPRT *transp;
+    struct sockaddr_in saddr;
+    int optval = 1;
 
     (void)argc;  /* Prevenimos avisos de parámetro no usado */
     (void)argv;  /* Prevenimos avisos de parámetro no usado */
 
-    /* Creamos un transporte TCP en el puerto por defecto (0 = puerto asignado automáticamente) */
-    transp = svctcp_create(RPC_ANYSOCK, 0, 0);
-    if (transp == NULL) {
-        fprintf(stderr, "%s", "cannot create tcp service.\n");
+    /* Creamos un socket UDP */
+    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) {
+        perror("socket");
         exit(1);
     }
 
-    /* Registramos el programa RPC */
-    if (!svc_register(transp, CLAVES_RPC_PROG, CLAVES_RPC_VERS, claves_rpc_prog_1, IPPROTO_TCP)) {
-        fprintf(stderr, "%s", "unable to register (CLAVES_RPC_PROG, CLAVES_RPC_VERS, tcp).\n");
+    /* Permitimos reutilizar el puerto */
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+
+    /* Configuramos la dirección del servidor */
+    memset(&saddr, 0, sizeof(saddr));
+    saddr.sin_family = AF_INET;
+    saddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    saddr.sin_port = htons(RPC_SERVER_PORT);
+
+    /* Bindeamos el socket al puerto fijo */
+    if (bind(sock, (struct sockaddr *)&saddr, sizeof(saddr)) < 0) {
+        perror("bind");
+        close(sock);
         exit(1);
     }
+
+    /* Creamos el transporte RPC UDP sobre el socket ya bindeado */
+    transp = svcudp_create(sock);
+    if (transp == NULL) {
+        fprintf(stderr, "cannot create rpc service.\n");
+        close(sock);
+        exit(1);
+    }
+
+    printf("==============================================\n");
+    printf("Servidor RPC iniciado\n");
+    printf("Puerto: %d\n", RPC_SERVER_PORT);
+    printf("Programa: 0x%x\n", CLAVES_RPC_PROG);
+    printf("Version: %d\n", CLAVES_RPC_VERS);
+    printf("==============================================\n");
+    fflush(stdout);
+
+    /* Registramos el programa RPC sin portmapper */
+    if (!svc_register(transp, CLAVES_RPC_PROG, CLAVES_RPC_VERS, claves_rpc_prog_1, 0)) {
+        fprintf(stderr, "WARNING: No se pudo registrar con portmapper (normal en macOS)\n");
+        fprintf(stderr, "El servidor escucha directamente en el puerto %d\n", RPC_SERVER_PORT);
+        fflush(stderr);
+    }
+
+    printf("Esperando conexiones en puerto %d...\n", RPC_SERVER_PORT);
+    fflush(stdout);
 
     /* El servidor entra en el bucle de atención de llamadas RPC */
     svc_run();
 
     /* Si svc_run() termina, algo fue mal */
-    fprintf(stderr, "%s", "svc_run returned\n");
+    fprintf(stderr, "svc_run returned\n");
     exit(1);
 
     return 0;
