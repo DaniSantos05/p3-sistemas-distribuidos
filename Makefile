@@ -1,131 +1,177 @@
-# Compilador que vamos a usar para C
+# ==========================================================
+# MAKEFILE - PRÁCTICA 3 SISTEMAS DISTRIBUIDOS (RPC)
+# ==========================================================
+
+# Guardamos en la variable CC el compilador que vamos a usar.
 CC = gcc
 
-# Flags de compilación:
-# -g     -> mete información para depurar
-# -Wall  -> activa avisos útiles del compilador
-# -fPIC  -> hace falta para crear bibliotecas compartidas
+# Detectamos el sistema operativo para adaptar la compilación.
+UNAME_S := $(shell uname -s)
+
+# Guardamos en CFLAGS las opciones básicas de compilación.
+# -g añade información de depuración.
+# -Wall activa avisos útiles del compilador.
+# -fPIC permite crear bibliotecas compartidas.
 CFLAGS = -g -Wall -fPIC
 
-# En muchos Linux actuales, ONC RPC va con tirpc
-# Por eso añadimos la ruta de cabeceras y la librería al enlazar
+# Flags especiales para archivos generados por rpcgen (que usan sintaxis K&R antigua)
+RPC_CFLAGS = $(CFLAGS) -Wno-incompatible-function-pointer-types -Wno-implicit-function-declaration
+
+# Guardamos en RPCGEN el comando que genera los archivos RPC.
+RPCGEN = rpcgen
+
+# Guardamos en RPCFLAGS la opción -N para que rpcgen use estilo ANSI C.
+RPCFLAGS = -N
+
+# Inicializamos variables relacionadas con RPC y bibliotecas compartidas.
+RPC_INC =
+RPC_LIBS =
+SHARED_FLAGS = -shared
+RPATH_FLAG = -Wl,-rpath=.
+
+# Si estamos en macOS, no usamos tirpc y ajustamos la biblioteca compartida.
+ifeq ($(UNAME_S),Darwin)
+CFLAGS += -Wno-deprecated-non-prototype
+SHARED_FLAGS = -dynamiclib -Wl,-install_name,@rpath/libclaves.so
+RPATH_FLAG = -Wl,-rpath,@executable_path
+endif
+
+# Si estamos en Linux, usamos tirpc y sus cabeceras.
+ifeq ($(UNAME_S),Linux)
 RPC_INC = -I/usr/include/tirpc
 RPC_LIBS = -ltirpc
+SHARED_FLAGS = -shared
+RPATH_FLAG = -Wl,-rpath=.
+endif
 
-# Nombre base del archivo RPC
-RPC_NAME = clavesRPC
+# Guardamos el nombre base de la interfaz RPC.
+RPC_BASE = clavesRPC
 
-# Archivo .x que define la interfaz RPC
-RPC_X = $(RPC_NAME).x
+# Guardamos el nombre del archivo .x de la interfaz RPC.
+RPC_X = $(RPC_BASE).x
 
-# Archivos generados por rpcgen que realmente vamos a usar
-RPC_H = $(RPC_NAME).h
-RPC_CLNT = $(RPC_NAME)_clnt.c
-RPC_SVC = $(RPC_NAME)_svc.c
-RPC_XDR = $(RPC_NAME)_xdr.c
+# Guardamos el nombre de la cabecera generada por rpcgen.
+RPC_H = $(RPC_BASE).h
 
-# Archivo manual del servidor que haces tú
-SERVER_IMPL = rpc_server_impl.c
+# Guardamos el nombre del archivo cliente generado por rpcgen.
+RPC_CLNT_C = $(RPC_BASE)_clnt.c
 
-# Archivo manual del proxy RPC que hará Sergio
-PROXY_IMPL = proxy-rpc.c
+# Guardamos el nombre del archivo servidor generado por rpcgen.
+RPC_SVC_C = $(RPC_BASE)_svc.c
 
-# Cliente de pruebas que reutilizáis
-APP_CLIENT = app-cliente.c
+# Guardamos el nombre del archivo XDR generado por rpcgen.
+RPC_XDR_C = $(RPC_BASE)_xdr.c
 
-# Lógica real del servicio que reutilizáis del ejercicio 1
-LOCAL_SERVICE = claves.c
-
-# Cabecera original del servicio
+# Guardamos el nombre de la cabecera original que reutilizamos.
 LOCAL_HEADER = claves.h
 
-# Objetos del lado cliente para construir libclaves.so
-CLIENT_OBJS = proxy-rpc.o $(RPC_NAME)_clnt.o $(RPC_NAME)_xdr.o
+# Guardamos el nombre del archivo con la lógica local del servicio.
+LOCAL_SERVICE = claves.c
 
-# Objetos del lado servidor para construir el ejecutable servidor
-SERVER_OBJS = $(SERVER_IMPL:.c=.o) $(RPC_NAME)_svc.o $(RPC_NAME)_xdr.o claves.o
+# Guardamos el nombre del cliente de pruebas.
+APP_CLIENT = app-cliente.c
 
-# Marcamos reglas que no representan archivos reales
+# Guardamos el nombre de tu archivo manual del servidor RPC.
+SERVER_IMPL = clavesRPC_server.c
+
+# Guardamos el nombre del archivo manual del proxy RPC.
+PROXY_IMPL = proxy-rpc.c
+
+# Agrupamos en una variable los objetos del lado cliente.
+CLIENT_OBJS = $(PROXY_IMPL:.c=.o) $(RPC_BASE)_clnt.o $(RPC_BASE)_xdr.o
+
+# Agrupamos en una variable los objetos del lado servidor.
+SERVER_OBJS = $(SERVER_IMPL:.c=.o) $(RPC_BASE)_svc.o $(RPC_BASE)_xdr.o claves.o
+
+# Indicamos que estas reglas no representan archivos reales.
 .PHONY: all clean rpc
 
-# Regla principal: compila todo
+# La regla principal compila todo lo necesario del proyecto.
+# Ojo: para que funcione del todo también tiene que existir proxy-rpc.c.
 all: rpc libclaves.so clavesRPC_server app-cliente
 
 # ==========================================================
-# REGLA PARA GENERAR LOS ARCHIVOS RPC
+# GENERACIÓN DE ARCHIVOS RPC
 # ==========================================================
 
-# Esta regla invoca rpcgen sobre clavesRPC.x
-# Usamos -aNM porque es la forma que aparece en el enunciado
-# y así se generan los archivos necesarios de soporte RPC
-rpc: $(RPC_X)
-	rpcgen -aNM $(RPC_X)
+# La regla rpc obliga a generar todos los archivos básicos de rpcgen.
+# NOTA: No regeneramos clavesRPC_clnt.c ya que contiene correcciones manuales para compatibilidad con C99
+rpc: $(RPC_H) $(RPC_SVC_C) $(RPC_XDR_C)
+
+# Esta regla genera la cabecera .h a partir del archivo .x.
+$(RPC_H): $(RPC_X)
+	$(RPCGEN) $(RPCFLAGS) -h -o $(RPC_H) $(RPC_X)
+
+# Esta regla genera el stub cliente a partir del archivo .x.
+# Se genera manualmente, no se regenera automáticamente
+# $(RPC_CLNT_C): $(RPC_X)
+#	$(RPCGEN) $(RPCFLAGS) -l -o $(RPC_CLNT_C) $(RPC_X)
+
+# Esta regla genera el stub servidor a partir del archivo .x.
+# Usamos -m para generar solo el servidor y no machacar tu archivo manual.
+$(RPC_SVC_C): $(RPC_X)
+	$(RPCGEN) $(RPCFLAGS) -m -o $(RPC_SVC_C) $(RPC_X)
+
+# Esta regla genera el archivo XDR a partir del archivo .x.
+$(RPC_XDR_C): $(RPC_X)
+	$(RPCGEN) $(RPCFLAGS) -c -o $(RPC_XDR_C) $(RPC_X)
 
 # ==========================================================
-# BIBLIOTECA DEL LADO CLIENTE: libclaves.so
+# BIBLIOTECA DEL LADO CLIENTE
 # ==========================================================
 
-# En esta práctica, la biblioteca que usa app-cliente.c
-# ya no sale de claves.c, sino de la parte cliente RPC
-# Es decir: proxy-rpc.c + archivos cliente generados por rpcgen
+# Esta regla construye libclaves.so con el proxy RPC, el stub cliente y el XDR.
 libclaves.so: $(CLIENT_OBJS)
-	$(CC) -shared -o libclaves.so $(CLIENT_OBJS) $(RPC_LIBS)
+	$(CC) $(SHARED_FLAGS) -o libclaves.so $(CLIENT_OBJS) $(RPC_LIBS)
+
+# Esta regla compila proxy-rpc.c y genera su objeto.
+$(PROXY_IMPL:.c=.o): $(PROXY_IMPL) $(LOCAL_HEADER) $(RPC_H)
+	$(CC) $(CFLAGS) $(RPC_INC) -c $(PROXY_IMPL)
+
+# Esta regla compila el archivo cliente generado por rpcgen.
+$(RPC_BASE)_clnt.o: $(RPC_CLNT_C) $(RPC_H)
+	$(CC) $(RPC_CFLAGS) $(RPC_INC) -c $(RPC_CLNT_C)
+
+# Esta regla compila el archivo XDR generado por rpcgen.
+$(RPC_BASE)_xdr.o: $(RPC_XDR_C) $(RPC_H)
+	$(CC) $(RPC_CFLAGS) $(RPC_INC) -c $(RPC_XDR_C)
 
 # ==========================================================
-# EJECUTABLE DEL SERVIDOR RPC
+# SERVIDOR RPC
 # ==========================================================
 
-# El servidor se construye juntando:
-# - tu implementación manual del servidor RPC
-# - el stub servidor generado por rpcgen
-# - la serialización XDR generada por rpcgen
-# - claves.c, que contiene la lógica real del servicio
+# Esta regla construye el ejecutable del servidor RPC.
+# Junta tu implementación manual, el stub servidor, el XDR y claves.c.
 clavesRPC_server: $(SERVER_OBJS)
 	$(CC) -o clavesRPC_server $(SERVER_OBJS) $(RPC_LIBS)
 
-# ==========================================================
-# EJECUTABLE DEL CLIENTE DE PRUEBA
-# ==========================================================
-
-# app-cliente.c sigue siendo el cliente de pruebas
-# y se enlaza con la biblioteca libclaves.so
-app-cliente: $(APP_CLIENT) libclaves.so $(LOCAL_HEADER)
-	$(CC) $(CFLAGS) -o app-cliente $(APP_CLIENT) -L. -Wl,-rpath=. -lclaves
-
-# ==========================================================
-# REGLAS DE COMPILACIÓN DE OBJETOS
-# ==========================================================
-
-# Compila tu implementación manual del servidor RPC
-rpc_server_impl.o: $(SERVER_IMPL) $(RPC_H) $(LOCAL_HEADER)
+# Esta regla compila tu archivo manual del servidor RPC.
+$(SERVER_IMPL:.c=.o): $(SERVER_IMPL) $(LOCAL_HEADER) $(RPC_H)
 	$(CC) $(CFLAGS) $(RPC_INC) -c $(SERVER_IMPL)
 
-# Compila el proxy RPC del lado cliente
-proxy-rpc.o: $(PROXY_IMPL) $(RPC_H) $(LOCAL_HEADER)
-	$(CC) $(CFLAGS) $(RPC_INC) -c $(PROXY_IMPL)
+# Esta regla compila el stub servidor generado por rpcgen.
+$(RPC_BASE)_svc.o: $(RPC_SVC_C) $(RPC_H)
+	$(CC) $(RPC_CFLAGS) $(RPC_INC) -c $(RPC_SVC_C)
 
-# Compila el stub cliente generado por rpcgen
-$(RPC_NAME)_clnt.o: $(RPC_CLNT) $(RPC_H)
-	$(CC) $(CFLAGS) $(RPC_INC) -c $(RPC_CLNT)
-
-# Compila el stub servidor generado por rpcgen
-$(RPC_NAME)_svc.o: $(RPC_SVC) $(RPC_H)
-	$(CC) $(CFLAGS) $(RPC_INC) -c $(RPC_SVC)
-
-# Compila el archivo XDR generado por rpcgen
-$(RPC_NAME)_xdr.o: $(RPC_XDR) $(RPC_H)
-	$(CC) $(CFLAGS) $(RPC_INC) -c $(RPC_XDR)
-
-# Compila claves.c, que contiene la lógica real del servicio
+# Esta regla compila claves.c, que contiene la lógica real del servicio.
 claves.o: $(LOCAL_SERVICE) $(LOCAL_HEADER)
 	$(CC) $(CFLAGS) -c $(LOCAL_SERVICE)
+
+# ==========================================================
+# CLIENTE DE PRUEBAS
+# ==========================================================
+
+# Esta regla construye el ejecutable app-cliente.
+# El cliente se enlaza con libclaves.so, que en esta práctica implementa RPC.
+app-cliente: $(APP_CLIENT) libclaves.so $(LOCAL_HEADER)
+	$(CC) $(CFLAGS) -o app-cliente $(APP_CLIENT) -L. $(RPATH_FLAG) -lclaves
 
 # ==========================================================
 # LIMPIEZA
 # ==========================================================
 
-# Borra objetos, biblioteca, ejecutables y archivos generados por rpcgen
+# Esta regla borra objetos, biblioteca, ejecutables y archivos generados por rpcgen.
+# NOTA: No limpiamos clavesRPC_clnt.c ya que contiene correcciones manuales para compatibilidad C99
 clean:
 	rm -f *.o *.so app-cliente clavesRPC_server
-	rm -f $(RPC_H) $(RPC_CLNT) $(RPC_SVC) $(RPC_XDR)
-	rm -f $(RPC_NAME)_server.c $(RPC_NAME)_client.c Makefile.$(RPC_NAME)
+	rm -f $(RPC_H) $(RPC_SVC_C) $(RPC_XDR_C)
