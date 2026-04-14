@@ -1,14 +1,15 @@
-// Archivo del lado servidor para la práctica RPC.
-// Aquí se implementa la lógica real de las operaciones remotas.
+// clavesRPC_server.c
+// Este archivo implementa la parte servidor de las operaciones RPC.
+// Aquí conectamos las llamadas remotas con las funciones reales de claves.c.
 
-#include <stdio.h>          // Para printf y mensajes de depuración si hicieran falta.
-#include <stdlib.h>         // Para NULL.
-#include <string.h>         // Para memset, strcpy y otras operaciones con memoria.
+#include <stdio.h>      // Para funciones básicas de entrada/salida.
+#include <stdlib.h>     // Para utilidades generales.
+#include <string.h>     // Para memset, strlen y manejo de cadenas.
 
-#include "claves.h"         // Para usar destroy, set_value, get_value, modify_value, delete_key y exist.
-#include "clavesRPC.h"      // Cabecera generada por rpcgen a partir de clavesRPC.x.
+#include "claves.h"     // Aquí están destroy, set_value, get_value, modify_value, delete_key y exist.
+#include "clavesRPC.h"  // Cabecera generada automáticamente por rpcgen.
 
-// Tamaño máximo de texto permitido en key y value1.
+// Tamaño máximo real de texto en C: 255 caracteres + '\0'.
 #define MAX_TEXTO 256
 
 // Número máximo de floats permitidos en value2.
@@ -16,235 +17,283 @@
 
 
 // ==========================================================
-// OPERACIÓN REMOTA: destroy
+// OPERACIÓN RPC: destroy
 // ==========================================================
 
-// Esta función implementa la operación RPC equivalente a destroy().
-// No recibe argumentos útiles, por eso el parámetro se llama argp pero no se usa.
+// Esta función atiende la llamada remota destroy().
 int *destroy_rpc_1_svc(void *argp, struct svc_req *rqstp) {
-    static int resultado;   // Variable estática para devolver el resultado por puntero.
+    static int resultado;      // Variable estática para poder devolver un puntero válido.
 
-    (void)argp;             // Se marca como no usado para evitar warnings del compilador.
-    (void)rqstp;            // También marcamos como no usado el contexto RPC.
+    (void)argp;                // No usamos argumentos en destroy(), así que evitamos warning.
+    (void)rqstp;               // Tampoco usamos directamente la información de la petición RPC.
 
-    resultado = destroy();  // Llamamos a la función real del servicio local.
-    return &resultado;      // Devolvemos la dirección del resultado.
+    resultado = destroy();     // Llamamos a la función real del servicio.
+    return &resultado;         // Devolvemos la dirección del resultado.
 }
 
 
 // ==========================================================
-// OPERACIÓN REMOTA: set_value
+// OPERACIÓN RPC: set_value
 // ==========================================================
 
-// Esta función implementa la operación RPC equivalente a set_value().
+// Esta función atiende la llamada remota set_value().
 int *set_value_rpc_1_svc(set_modify_args *argp, struct svc_req *rqstp) {
-    static int resultado;   // Variable estática para devolver el estado final.
+    static int resultado;      // Variable estática para devolver el estado final.
+    struct Paquete valor3;     // Estructura local equivalente a PaqueteRPC.
 
-    (void)rqstp;            // El contexto RPC no se usa directamente aquí.
+    (void)rqstp;               // No usamos directamente la información RPC.
 
-    // Comprobamos que el puntero recibido no sea NULL.
+    // Comprobamos que el puntero principal no sea NULL.
     if (argp == NULL) {
-        resultado = -1;     // Si no hay argumentos válidos, devolvemos error.
+        resultado = -1;
         return &resultado;
     }
 
     // Comprobamos que key y value1 existan.
     if (argp->key == NULL || argp->value1 == NULL) {
-        resultado = -1;     // Si faltan datos básicos, devolvemos error.
+        resultado = -1;
         return &resultado;
     }
 
-    // Comprobamos que el número de floats esté dentro del rango permitido.
+    // Comprobamos que las cadenas no superen el tamaño permitido.
+    if (strlen(argp->key) >= MAX_TEXTO || strlen(argp->value1) >= MAX_TEXTO) {
+        resultado = -1;
+        return &resultado;
+    }
+
+    // Comprobamos que N_value2 esté en el rango correcto.
     if (argp->N_value2 < 1 || argp->N_value2 > MAX_VALUE2) {
-        resultado = -1;     // Si el tamaño es inválido, devolvemos error.
+        resultado = -1;
         return &resultado;
     }
 
     // Comprobamos que la longitud real del vector RPC coincida con N_value2.
-    if ((int)argp->V_value2.V_value2_len != argp->N_value2) {
-        resultado = -1;     // Si no coincide, consideramos que la petición es incorrecta.
+    if ((int)argp->V_value2.vector_floats_len != argp->N_value2) {
+        resultado = -1;
         return &resultado;
     }
 
-    // Comprobamos que el puntero al vector exista.
-    if (argp->V_value2.V_value2_val == NULL) {
-        resultado = -1;     // Si no hay vector, devolvemos error.
+    // Comprobamos que el puntero al array de floats exista.
+    if (argp->V_value2.vector_floats_val == NULL) {
+        resultado = -1;
         return &resultado;
     }
 
-    // Construimos la estructura Paquete local a partir de la estructura RPC.
-    struct Paquete valor3;                  // Estructura local equivalente a PaqueteRPC.
-    valor3.x = argp->value3.x;             // Copiamos x.
-    valor3.y = argp->value3.y;             // Copiamos y.
-    valor3.z = argp->value3.z;             // Copiamos z.
+    // Reconstruimos la estructura local Paquete a partir de la estructura RPC.
+    valor3.x = argp->value3.x;
+    valor3.y = argp->value3.y;
+    valor3.z = argp->value3.z;
 
-    // Llamamos a la función real del servicio local.
+    // Llamamos a la función real del servicio con los datos recibidos por RPC.
     resultado = set_value(
-        argp->key,                         // Clave recibida por RPC.
-        argp->value1,                      // value1 recibido por RPC.
-        argp->N_value2,                    // Número de floats.
-        argp->V_value2.V_value2_val,       // Puntero al array de floats.
-        valor3                             // Estructura Paquete reconstruida.
+        argp->key,
+        argp->value1,
+        argp->N_value2,
+        argp->V_value2.vector_floats_val,
+        valor3
     );
 
-    return &resultado;                     // Devolvemos el estado de la operación.
-}
-
-
-// ==========================================================
-// OPERACIÓN REMOTA: get_value
-// ==========================================================
-
-// Esta función implementa la operación RPC equivalente a get_value().
-get_value_res *get_value_rpc_1_svc(key_args *argp, struct svc_req *rqstp) {
-    static get_value_res resultado;        // Estructura estática para devolver estado y datos.
-    static char value1_buffer[MAX_TEXTO];  // Buffer estático para guardar value1.
-    static float v2_buffer[MAX_VALUE2];    // Buffer estático para guardar el vector de floats.
-    struct Paquete valor3_local;           // Estructura local para recibir x, y y z.
-
-    (void)rqstp;                           // No usamos el contexto RPC directamente.
-
-    // Ponemos toda la estructura de resultado a cero antes de reutilizarla.
-    memset(&resultado, 0, sizeof(resultado));
-
-    // Hacemos que el campo string del resultado apunte a nuestro buffer estático.
-    resultado.value1 = value1_buffer;
-
-    // Hacemos que el vector RPC del resultado apunte al buffer de floats.
-    resultado.V_value2.V_value2_val = v2_buffer;
-
-    // Inicialmente decimos que la longitud del vector es 0.
-    resultado.V_value2.V_value2_len = 0;
-
-    // Comprobamos que el argumento y la clave existan.
-    if (argp == NULL || argp->key == NULL) {
-        resultado.estado = -1;            // Si no hay clave válida, devolvemos error.
-        return &resultado;
-    }
-
-    // Llamamos a la función real del servicio local.
-    resultado.estado = get_value(
-        argp->key,                        // Clave que se quiere consultar.
-        value1_buffer,                    // Aquí se escribirá value1.
-        &resultado.N_value2,              // Aquí se escribirá el número de floats.
-        v2_buffer,                        // Aquí se escribirán los floats.
-        &valor3_local                     // Aquí se escribirá la estructura Paquete.
-    );
-
-    // Si ha fallado get_value, devolvemos solo el estado.
-    if (resultado.estado != 0) {
-        return &resultado;
-    }
-
-    // Si ha ido bien, copiamos los tres enteros al resultado RPC.
-    resultado.value3.x = valor3_local.x;  // Copiamos x.
-    resultado.value3.y = valor3_local.y;  // Copiamos y.
-    resultado.value3.z = valor3_local.z;  // Copiamos z.
-
-    // Guardamos también la longitud real del vector RPC.
-    resultado.V_value2.V_value2_len = resultado.N_value2;
-
-    // Devolvemos la estructura completa con estado y datos.
+    // Devolvemos el estado de la operación.
     return &resultado;
 }
 
 
 // ==========================================================
-// OPERACIÓN REMOTA: modify_value
+// OPERACIÓN RPC: get_value
 // ==========================================================
 
-// Esta función implementa la operación RPC equivalente a modify_value().
+// Esta función atiende la llamada remota get_value().
+get_value_res *get_value_rpc_1_svc(key_args *argp, struct svc_req *rqstp) {
+    static get_value_res resultado;           // Estructura estática para devolver estado y datos.
+    static char value1_buffer[MAX_TEXTO];     // Buffer estático para value1.
+    static float value2_buffer[MAX_VALUE2];   // Buffer estático para el vector de floats.
+    struct Paquete valor3_local;              // Estructura local para recibir x, y y z.
+
+    (void)rqstp;                              // No usamos directamente la información RPC.
+
+    // Limpiamos toda la estructura de salida antes de reutilizarla.
+    memset(&resultado, 0, sizeof(resultado));
+
+    // Dejamos también los buffers en un estado limpio.
+    memset(value1_buffer, 0, sizeof(value1_buffer));
+    memset(value2_buffer, 0, sizeof(value2_buffer));
+
+    // Hacemos que el campo value1 del resultado apunte al buffer estático.
+    resultado.value1 = value1_buffer;
+
+    // Hacemos que el vector RPC del resultado apunte al buffer de floats.
+    resultado.V_value2.vector_floats_val = value2_buffer;
+
+    // Inicialmente ponemos la longitud del vector a 0.
+    resultado.V_value2.vector_floats_len = 0;
+
+    // Comprobamos que el argumento y la clave existan.
+    if (argp == NULL || argp->key == NULL) {
+        resultado.estado = -1;
+        return &resultado;
+    }
+
+    // Comprobamos que la clave no supere el tamaño permitido.
+    if (strlen(argp->key) >= MAX_TEXTO) {
+        resultado.estado = -1;
+        return &resultado;
+    }
+
+    // Llamamos a la función real del servicio.
+    resultado.estado = get_value(
+        argp->key,
+        value1_buffer,
+        &resultado.N_value2,
+        value2_buffer,
+        &valor3_local
+    );
+
+    // Si hubo error, devolvemos solo el estado.
+    if (resultado.estado != 0) {
+        return &resultado;
+    }
+
+    // Comprobamos que el número de floats recibido sea válido.
+    if (resultado.N_value2 < 1 || resultado.N_value2 > MAX_VALUE2) {
+        resultado.estado = -1;
+        resultado.V_value2.vector_floats_len = 0;
+        return &resultado;
+    }
+
+    // Copiamos la estructura Paquete local al resultado RPC.
+    resultado.value3.x = valor3_local.x;
+    resultado.value3.y = valor3_local.y;
+    resultado.value3.z = valor3_local.z;
+
+    // Indicamos cuántos floats lleva realmente el vector.
+    resultado.V_value2.vector_floats_len = resultado.N_value2;
+
+    // Devolvemos el resultado completo.
+    return &resultado;
+}
+
+
+// ==========================================================
+// OPERACIÓN RPC: modify_value
+// ==========================================================
+
+// Esta función atiende la llamada remota modify_value().
 int *modify_value_rpc_1_svc(set_modify_args *argp, struct svc_req *rqstp) {
-    static int resultado;   // Variable estática para devolver el estado.
+    static int resultado;      // Variable estática para devolver el estado final.
+    struct Paquete valor3;     // Estructura local equivalente a PaqueteRPC.
 
-    (void)rqstp;            // El contexto RPC no se usa directamente aquí.
+    (void)rqstp;               // No usamos directamente la información RPC.
 
-    // Comprobamos que el puntero recibido no sea NULL.
+    // Comprobamos que el puntero principal no sea NULL.
     if (argp == NULL) {
-        resultado = -1;     // Si no hay argumentos válidos, devolvemos error.
+        resultado = -1;
         return &resultado;
     }
 
     // Comprobamos que key y value1 existan.
     if (argp->key == NULL || argp->value1 == NULL) {
-        resultado = -1;     // Si faltan datos básicos, devolvemos error.
+        resultado = -1;
         return &resultado;
     }
 
-    // Comprobamos que el número de floats esté dentro del rango permitido.
+    // Comprobamos que las cadenas no superen el tamaño permitido.
+    if (strlen(argp->key) >= MAX_TEXTO || strlen(argp->value1) >= MAX_TEXTO) {
+        resultado = -1;
+        return &resultado;
+    }
+
+    // Comprobamos que N_value2 esté en el rango correcto.
     if (argp->N_value2 < 1 || argp->N_value2 > MAX_VALUE2) {
-        resultado = -1;     // Si el tamaño no es válido, devolvemos error.
+        resultado = -1;
         return &resultado;
     }
 
-    // Comprobamos que la longitud real del vector coincida con N_value2.
-    if ((int)argp->V_value2.V_value2_len != argp->N_value2) {
-        resultado = -1;     // Si no coincide, consideramos la petición incorrecta.
+    // Comprobamos que la longitud real del vector RPC coincida con N_value2.
+    if ((int)argp->V_value2.vector_floats_len != argp->N_value2) {
+        resultado = -1;
         return &resultado;
     }
 
-    // Comprobamos que exista el puntero al vector.
-    if (argp->V_value2.V_value2_val == NULL) {
-        resultado = -1;     // Si no hay vector, devolvemos error.
+    // Comprobamos que el puntero al array de floats exista.
+    if (argp->V_value2.vector_floats_val == NULL) {
+        resultado = -1;
         return &resultado;
     }
 
-    // Reconstruimos la estructura Paquete local.
-    struct Paquete valor3;                  // Estructura local.
-    valor3.x = argp->value3.x;             // Copiamos x.
-    valor3.y = argp->value3.y;             // Copiamos y.
-    valor3.z = argp->value3.z;             // Copiamos z.
+    // Reconstruimos la estructura local Paquete.
+    valor3.x = argp->value3.x;
+    valor3.y = argp->value3.y;
+    valor3.z = argp->value3.z;
 
-    // Llamamos a la función real del servicio local.
+    // Llamamos a la función real del servicio.
     resultado = modify_value(
-        argp->key,                         // Clave recibida.
-        argp->value1,                      // Nuevo value1.
-        argp->N_value2,                    // Número de floats.
-        argp->V_value2.V_value2_val,       // Vector recibido.
-        valor3                             // Nueva estructura Paquete.
+        argp->key,
+        argp->value1,
+        argp->N_value2,
+        argp->V_value2.vector_floats_val,
+        valor3
     );
 
-    return &resultado;                     // Devolvemos el estado.
+    // Devolvemos el estado.
+    return &resultado;
 }
 
 
 // ==========================================================
-// OPERACIÓN REMOTA: delete_key
+// OPERACIÓN RPC: delete_key
 // ==========================================================
 
-// Esta función implementa la operación RPC equivalente a delete_key().
+// Esta función atiende la llamada remota delete_key().
 int *delete_key_rpc_1_svc(key_args *argp, struct svc_req *rqstp) {
-    static int resultado;   // Variable estática para devolver el estado.
+    static int resultado;      // Variable estática para devolver el estado.
 
-    (void)rqstp;            // No usamos el contexto RPC aquí.
+    (void)rqstp;               // No usamos directamente la información RPC.
 
     // Comprobamos que el argumento y la clave existan.
     if (argp == NULL || argp->key == NULL) {
-        resultado = -1;     // Si no hay clave válida, devolvemos error.
+        resultado = -1;
         return &resultado;
     }
 
-    resultado = delete_key(argp->key); // Llamamos a la función real del servicio.
-    return &resultado;                 // Devolvemos el estado de la operación.
+    // Comprobamos que la clave no supere el tamaño permitido.
+    if (strlen(argp->key) >= MAX_TEXTO) {
+        resultado = -1;
+        return &resultado;
+    }
+
+    // Llamamos a la función real del servicio.
+    resultado = delete_key(argp->key);
+
+    // Devolvemos el estado.
+    return &resultado;
 }
 
 
 // ==========================================================
-// OPERACIÓN REMOTA: exist
+// OPERACIÓN RPC: exist
 // ==========================================================
 
-// Esta función implementa la operación RPC equivalente a exist().
+// Esta función atiende la llamada remota exist().
 int *exist_rpc_1_svc(key_args *argp, struct svc_req *rqstp) {
-    static int resultado;   // Variable estática para devolver el estado.
+    static int resultado;      // Variable estática para devolver el estado.
 
-    (void)rqstp;            // El contexto RPC no se usa directamente.
+    (void)rqstp;               // No usamos directamente la información RPC.
 
     // Comprobamos que el argumento y la clave existan.
     if (argp == NULL || argp->key == NULL) {
-        resultado = -1;     // Si no hay clave válida, devolvemos error.
+        resultado = -1;
         return &resultado;
     }
 
-    resultado = exist(argp->key);      // Llamamos a la función real del servicio.
-    return &resultado;                 // Devolvemos 1, 0 o -1 según corresponda.
+    // Comprobamos que la clave no supere el tamaño permitido.
+    if (strlen(argp->key) >= MAX_TEXTO) {
+        resultado = -1;
+        return &resultado;
+    }
+
+    // Llamamos a la función real del servicio.
+    resultado = exist(argp->key);
+
+    // Devolvemos 1, 0 o -1 según corresponda.
+    return &resultado;
 }
